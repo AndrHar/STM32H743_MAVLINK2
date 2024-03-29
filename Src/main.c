@@ -21,7 +21,6 @@
   *		Due to documentation of 'mavlink v2' it is normal to get
   *		warnings[-Waddress-of-packed-member] during compile
   *
-  *		This program can be updated via CAN-bus with CAN_Bootloader
   *
   ******************************************************************************
   */
@@ -32,27 +31,18 @@
 
 /* Defines -------------------------------------------------------------------*/
 
-#define BOARD_ID 					(0x0U)
-
-/* defines for operations with FLASH */
-#define APP_PROG_ADDRESS 			(0x8040000U)
-#define APP_KONF_ADDRESS 			(0x8020000U)
-
-#define FLASH_DATA_HEADER 			((uint32_t)0x0123fedc)
 
 /* defines for operations with MAVLINK */
 #define MAVLINK_MY_SYSTEM_ID 		((uint8_t)0x01)
 #define MAVLINK_MY_COMPONENT_ID 	((uint8_t)0x33)
 #define MAV_MSG_INTERVAL_1HZ		((int32_t)1000000)
+
 enum MAVLINK_ERROR{MAVLINK_NO_ERRORS, MAVLINK_PARSE_ERROR};
 
-/* use as index of array 'arErrors' */
-enum ERROR_TYPE{FLASH_ERRORS, MAVLINK_ERRORS};
 
 /* Variables -----------------------------------------------------------------*/
 
-//uint8_t Error_status = FLASH_RDY;
-uint8_t arErrors[] = {FLASH_RDY, MAVLINK_NO_ERRORS};
+uint8_t Errors = MAVLINK_NO_ERRORS;
 static mavlink_message_t msg = {0};  //fill structure by 0
 static mavlink_status_t status = {0};
 
@@ -71,10 +61,7 @@ static typeDefCanMessage CAN_TxMsg_0x600;
 
 
 /* ---------- CAN RxMsg headers ------------------*/
-uint32_t rxCANid[] = { 0x580 + BOARD_ID, 0x100 };
-
-static FDCAN_FilterTypeDef headerRxMsg_0x58x;
-static typeDefCanMessage CAN_RxMsg_0x58x;
+uint32_t rxCANid[] = { 0x100 };
 
 static FDCAN_FilterTypeDef headerRxMsg_0x100;
 static typeDefCanMessage CAN_RxMsg_0x100;
@@ -85,14 +72,6 @@ static typeDefCanMessage CAN_RxMsg_0x100;
 /* Main ----------------------------------------------------------------------*/
 int main(void)
 {
-
-	/* After execution, bootloader transfers control to this program.
-	 * New assignation of 'Vector Table Offset Register' should be done.
-	 * */
-	__disable_irq();
-	SCB->VTOR = (uint32_t)APP_PROG_ADDRESS;
-	__enable_irq();
-
 
 	/* Set the power supply configuration */
 	MODIFY_REG(PWR->CR3, (PWR_CR3_SCUEN | PWR_CR3_LDOEN | PWR_CR3_BYPASS), PWR_CR3_LDOEN);
@@ -110,20 +89,6 @@ int main(void)
 
 	InitLEDs();
 
-	/* read config data from flash */
-	if (BOARD_ID != 0)
-	{
-		uint32_t config_data[] = {0,0};
-		config_data[0] = flashRead(APP_KONF_ADDRESS);
-		config_data[1] = flashRead(APP_KONF_ADDRESS+4);
-
-		if ( (config_data[0] != FLASH_DATA_HEADER) || (config_data[1] != BOARD_ID) )
-		{
-			//LED3_ON();
-			arErrors[FLASH_ERRORS] = WriteBoardIdToFlash();
-		}
-
-	}
 
 	/* CAN config */
 	InitCAN1();
@@ -163,6 +128,57 @@ int main(void)
 	}
 }
 /* End main ------------------------------------------------------------------*/
+
+
+
+
+/* CheckRxMessageCAN1 --------------------------------------------------------*/
+void CheckRxMessageCAN1 (void)
+{
+	 uint32_t reg_NewDataFlags = FDCAN1->NDAT1; // for RxBufferIndex < 32
+
+
+	/* Check Msg 0x100 reception */
+	if((reg_NewDataFlags & (1 << headerRxMsg_0x100.RxBufferIndex)) != 0)
+	{
+		ReceiveCanMsg(headerRxMsg_0x100.RxBufferIndex, CAN_RxMsg_0x100.data, CAN_MODULE1);
+
+		/* command to send CMD_Msg */
+		if ( (CAN_RxMsg_0x100.data[0] == 0x11) )
+		{
+			//const char* param_id = "MAX_ROLL_RATE";
+			//SendMavlinkCmd(param_id);
+
+			MAV_Request_MSG( MAVLINK_MSG_ID_ATTITUDE, MAV_MSG_INTERVAL_1HZ);
+		}
+
+	}
+
+}
+/* End CheckRxMessageCAN1 ----------------------------------------------------*/
+
+
+
+/* CheckUart2RxMsg -----------------------------------------------------------*/
+void CheckUart2RxMsg (void)
+{
+
+	while ( (USART2->ISR) & USART_ISR_RXNE ) //if RXNE = 1 Received data is ready to be read (some bytes may storage in FIFO)
+	{
+		//USART2->RDR;  /* read received byte */
+
+		MAV_ParseFrame(USART2->RDR);
+
+	} /* end while */
+
+	/* clear flags */
+	if ( ((USART2->ISR) & USART_ISR_FE) > 0)
+	{
+		USART2->ICR |= USART_ICR_FECF;
+	}
+}
+/* End CheckUart2RxMsg -------------------------------------------------------*/
+
 
 
 
@@ -238,34 +254,13 @@ void MAV_ParseFrame (uint8_t byte)
 	else    // mavlink_parse_char() == 0
 	{
 		if ( status.parse_error > 0 ){
-			arErrors[MAVLINK_ERRORS] = MAVLINK_PARSE_ERROR;
+			Errors = MAVLINK_PARSE_ERROR;
 		}
 	}
 
 }
 /* End MAV_ParseFrame --------------------------------------------------------*/
 
-
-
-/* CheckUart2RxMsg -----------------------------------------------------------*/
-void CheckUart2RxMsg (void)
-{
-
-	while ( (USART2->ISR) & USART_ISR_RXNE ) //if RXNE = 1 Received data is ready to be read (some bytes may storage in FIFO)
-	{
-		//USART2->RDR;  /* read received byte */
-
-		MAV_ParseFrame(USART2->RDR);
-
-	} /* end while */
-
-	/* clear flags */
-	if ( ((USART2->ISR) & USART_ISR_FE) > 0)
-	{
-		USART2->ICR |= USART_ICR_FECF;
-	}
-}
-/* End CheckUart2RxMsg -------------------------------------------------------*/
 
 
 
@@ -295,7 +290,7 @@ void Tick_1sec (void)
 
 
 	/* Check Errors */
-	if ((arErrors[FLASH_ERRORS] != FLASH_RDY) || (arErrors[MAVLINK_ERRORS] != MAVLINK_NO_ERRORS)  )
+	if ( Errors != MAVLINK_NO_ERRORS  )
 	{
 		LED3_ON();
 	}
@@ -377,114 +372,6 @@ void MAV_Request_MSG( uint16_t msg_id, int32_t interval_us)
 
 
 
-/* CheckRxMessageCAN1 --------------------------------------------------------*/
-void CheckRxMessageCAN1 (void)
-{
-	 uint32_t reg_NewDataFlags = FDCAN1->NDAT1; // for RxBufferIndex < 32
-
-	/* Check Msg 0x58x reception */
-	if((reg_NewDataFlags & (1 << headerRxMsg_0x58x.RxBufferIndex)) != 0)
-	{
-		ReceiveCanMsg(headerRxMsg_0x58x.RxBufferIndex, CAN_RxMsg_0x58x.data, CAN_MODULE1);
-
-		/* example of jumping back to bootloader */
-		if ( (CAN_RxMsg_0x58x.data[0] == 0x55) &&  (CAN_RxMsg_0x58x.data[1] == 0x66))
-		{
-			// MC always starts from bootloader after reset
-			NVIC_SystemReset();
-		}
-
-		/* new bootloader delay value can be written to flash-memory */
-		if ( (CAN_RxMsg_0x58x.data[0] == 0xCC) &&  (CAN_RxMsg_0x58x.data[1] == 0xDD))
-		{
-			uint32_t delay;
-
-			delay = (CAN_RxMsg_0x58x.data[2] << 8) + CAN_RxMsg_0x58x.data[3];
-			ChangeBootloaderDelay(delay);
-		}
-
-
-	}
-
-	/* Check Msg 0x100 reception */
-	if((reg_NewDataFlags & (1 << headerRxMsg_0x100.RxBufferIndex)) != 0)
-	{
-		ReceiveCanMsg(headerRxMsg_0x100.RxBufferIndex, CAN_RxMsg_0x100.data, CAN_MODULE1);
-
-		/* command to send CMD_Msg */
-		if ( (CAN_RxMsg_0x100.data[0] == 0x11) )
-		{
-			//const char* param_id = "MAX_ROLL_RATE";
-			//SendMavlinkCmd(param_id);
-
-			MAV_Request_MSG( MAVLINK_MSG_ID_ATTITUDE, MAV_MSG_INTERVAL_1HZ);
-		}
-
-	}
-
-
-}
-/* End CheckRxMessageCAN1 ----------------------------------------------------*/
-
-
-
-/* WriteBoardIdToFlash -------------------------------------------------------*/
-enum FLASH_STATUS WriteBoardIdToFlash(void)
-{
-	uint32_t buff[2];
-	buff[0] = FLASH_DATA_HEADER;
-	buff[1] = BOARD_ID;
-
-	if ( flashUnlock() != FLASH_RDY ){ return FLASH_LOCK_ERROR;}
-
-
-	if (flash_EraseSector(FLASH_SECTOR_CONFIG_DATA) == FLASH_RDY)
-	{
-		if (flashWrite(APP_KONF_ADDRESS, ((uint32_t)buff), sizeof(buff)) != FLASH_RDY)
-		{
-			return FLASH_PGM_ERROR;
-		}
-
-	}
-	else {return FLASH_PGM_ERROR;}
-
-	if ( flashLock() != FLASH_RDY ){ return FLASH_LOCK_ERROR;}
-
-	return FLASH_RDY;
-
-}
-/* End WriteBoardIdToFlash ---------------------------------------------------*/
-
-
-
-/* ChangeBootloaderDelay -----------------------------------------------------*/
-enum FLASH_STATUS ChangeBootloaderDelay(uint32_t delay)
-{
-	uint32_t buff[3];
-
-	buff[0] = FLASH_DATA_HEADER;
-	buff[1] = BOARD_ID;
-	buff[2] = delay;
-
-	if ( flashUnlock() != FLASH_RDY ){ return FLASH_LOCK_ERROR;}
-
-	if (flash_EraseSector(FLASH_SECTOR_CONFIG_DATA) == FLASH_RDY)
-	{
-		if (flashWrite(APP_KONF_ADDRESS, ((uint32_t)buff), sizeof(buff)) != FLASH_RDY)
-		{
-			return FLASH_PGM_ERROR;
-		}
-
-	}
-	else {return FLASH_PGM_ERROR;}
-
-	if ( flashLock() != FLASH_RDY ){ return FLASH_LOCK_ERROR;}
-
-	return FLASH_RDY;
-}
-/* End ChangeBootloaderDelay -------------------------------------------------*/
-
-
 
 
 
@@ -515,20 +402,8 @@ void Config_CAN_Filters(void)
 
 	uint32_t index;
 
-	/* Configure Rx filter Msg ID 0x59x */
-	index = FDCAN_RX_BUFFER0;
-	headerRxMsg_0x58x.RxBufferIndex = index;
-	headerRxMsg_0x58x.FilterIndex = index;
-	headerRxMsg_0x58x.IdType = FDCAN_STANDARD_ID;
-	headerRxMsg_0x58x.FilterType = FDCAN_FILTER_DUAL;
-	headerRxMsg_0x58x.FilterConfig = FDCAN_FILTER_TO_RXBUFFER;
-	headerRxMsg_0x58x.FilterID1 = rxCANid[index];
-	headerRxMsg_0x58x.FilterID2 = 0x00;
-
-	RxFilterRegisterConfig(&headerRxMsg_0x58x);
-
 	/* Configure Rx filter Msg ID 0x100 */
-	index = FDCAN_RX_BUFFER1;
+	index = FDCAN_RX_BUFFER0;
 	headerRxMsg_0x100.RxBufferIndex = index;
 	headerRxMsg_0x100.FilterIndex = index;
 	headerRxMsg_0x100.IdType = FDCAN_STANDARD_ID;

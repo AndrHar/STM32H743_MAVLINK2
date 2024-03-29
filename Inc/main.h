@@ -9,7 +9,6 @@
 #include "stm32h7xx.h"
 #include "rcc.h"
 #include "timer.h"
-#include "flash.h"
 #include "can.h"
 #include "uart.h"
 
@@ -35,10 +34,8 @@
 /* Functions -----------------------------------------------------------------*/
 
 void CheckRxMessageCAN1 (void);
-enum FLASH_STATUS ChangeBootloaderDelay(uint32_t delay);
 
 void InitLEDs(void);
-enum FLASH_STATUS WriteBoardIdToFlash(void);
 
 void Tick_1ms(void);
 void Tick_100ms(void);
