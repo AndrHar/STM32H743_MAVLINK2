@@ -2,7 +2,7 @@
 
 Example of implementing mavlink (v2) library.
 
-###### Program functionality:
+#### Program functionality:
 
 1. Mavlink communication occurs via UART
 
@@ -14,7 +14,7 @@ Example of implementing mavlink (v2) library.
 
 5. Read value of determined parameter
 
-###### Base actions of this program:
+#### Base actions of this program:
 
 - send CanMsg (0x600) in response to receiving a heartbeat_msg from mavlink (uart2);
 
@@ -33,7 +33,7 @@ Example of implementing mavlink (v2) library.
 
 ###### 
 
-##### Used test equipment:
+#### Used test equipment:
 
 1. NUCLEO-H743ZI board from STM with separate external CAN-driver
 
